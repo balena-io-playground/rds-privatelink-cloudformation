@@ -1,0 +1,94 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  Creates a VPC Privatelink & Network Load Balancer which forwards traffic to an RDS Database.
+
+Parameters:
+  VPCEndpointServiceAllowedPrincipals:
+    Description: >-
+      The ARN of the IAM users & roles authorized to access the VPC endpoint.
+    Type: CommaDelimitedList
+  RdsIpAddress:
+    Description: >-
+      The resolved internal IP address of the RDS endpoint.
+    Type: String
+    AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})"
+  SubnetList:
+    Description: >-
+      Comma-delimited list of subnets that the network load balancer would be able to connect to.
+    Type: CommaDelimitedList
+  VpcId:
+    Description: >-
+      ID of the VPC where the database is provisioned.
+    Type: String
+
+Resources:
+  VPCEndpointService:
+    Type: AWS::EC2::VPCEndpointService
+    Properties: 
+      AcceptanceRequired: true
+      NetworkLoadBalancerArns: 
+        - !Ref NLBLoadBalancer
+
+  VPCEndpointServicePermissions:
+    Type: AWS::EC2::VPCEndpointServicePermissions
+    Properties: 
+      AllowedPrincipals: !Ref VPCEndpointServiceAllowedPrincipals
+      ServiceId: !Ref VPCEndpointService
+
+  NLBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Privatelink NLB security group
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Stack
+          Value: !Ref "AWS::StackName"
+        - Key: Network
+          Value: Public
+      VpcId: !Ref VpcId
+  
+  NLBLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties: 
+      IpAddressType: dualstack
+      LoadBalancerAttributes: 
+        - Key: "load_balancing.cross_zone.enabled"
+          Value: "true"
+      Scheme: internal
+      Subnets: !Ref SubnetList
+      Tags:
+        - Key: Stack
+          Value: !Ref "AWS::StackName"
+        - Key: Network
+          Value: Public
+      Type: network
+
+  NLBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      TargetType: ip
+      Port: 5432
+      Protocol: TCP
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: 60
+      Targets:
+        - Id: !Ref RdsIpAddress
+      HealthCheckEnabled: true
+      IpAddressType: ipv4
+      VpcId: !Ref VpcId
+
+  NLBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref NLBTargetGroup
+      LoadBalancerArn: !Ref NLBLoadBalancer
+      Port: 5432
+      Protocol: TCP
