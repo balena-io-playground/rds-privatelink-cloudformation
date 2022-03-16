@@ -35,22 +35,6 @@ Resources:
     Properties: 
       AllowedPrincipals: !Ref VPCEndpointServiceAllowedPrincipals
       ServiceId: !Ref VPCEndpointService
-
-  NLBSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Privatelink NLB security group
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 5432
-          ToPort: 5432
-          CidrIp: 0.0.0.0/0
-      Tags:
-        - Key: Stack
-          Value: !Ref "AWS::StackName"
-        - Key: Network
-          Value: Public
-      VpcId: !Ref VpcId
   
   NLBLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
