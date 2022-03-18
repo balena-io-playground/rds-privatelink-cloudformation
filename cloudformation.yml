@@ -3,6 +3,7 @@ AWSTemplateFormatVersion: 2010-09-09
 Description: >-
   Creates a VPC Privatelink & Network Load Balancer which forwards traffic to an RDS Database.
 
+
 Parameters:
   VPCEndpointServiceAllowedPrincipals:
     Description: >-
@@ -21,6 +22,7 @@ Parameters:
     Description: >-
       ID of the VPC where the database is provisioned.
     Type: String
+
 
 Resources:
   VPCEndpointService:
@@ -76,3 +78,11 @@ Resources:
       LoadBalancerArn: !Ref NLBLoadBalancer
       Port: 5432
       Protocol: TCP
+
+
+Outputs:
+  NLBLoadBalancerDNSName:
+    Description: "DNS name of the load balancer."
+    Value: !GetAtt NLBLoadBalancer.DNSName
+    Export:
+      Name: !Sub "${AWS::StackName}-NLBLoadBalancerDNSName"
