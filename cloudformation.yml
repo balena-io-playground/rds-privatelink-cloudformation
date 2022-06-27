@@ -9,11 +9,14 @@ Parameters:
     Description: >-
       The ARN of the IAM users & roles authorized to access the VPC endpoint.
     Type: CommaDelimitedList
-  RdsIpAddress:
+  DnsServers:
     Description: >-
-      The resolved internal IP address of the RDS endpoint.
+      The IP address of the VPC nameserver.
     Type: String
-    AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})"
+  RdsFQDN:
+    Description: >-
+      The fully qualified domain name (FQDN) of the RDS endpoint.
+    Type: String
   SubnetList:
     Description: >-
       Comma-delimited list of subnets that the network load balancer would be able to connect to.
@@ -63,8 +66,6 @@ Resources:
       TargetGroupAttributes:
         - Key: deregistration_delay.timeout_seconds
           Value: 60
-      Targets:
-        - Id: !Ref RdsIpAddress
       HealthCheckEnabled: true
       IpAddressType: ipv4
       VpcId: !Ref VpcId
@@ -79,6 +80,104 @@ Resources:
       Port: 5432
       Protocol: TCP
 
+  S3BucketForLambda:
+    Type: AWS::S3::Bucket
+    Properties:
+      Tags:
+        - Key: Stack
+          Value: !Ref "AWS::StackName"
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:DeleteObject
+                  - s3:CreateBucket
+                  - s3:DeleteBucket
+                Resource: !Join
+                  - ""
+                  - - 'arn:aws:s3:::'
+                    - !Ref S3BucketForLambda
+                    - '/*'                        
+              - Effect: Allow
+                Action:
+                  - s3:ListAllMyBuckets
+                  - cloudwatch:PutMetricData
+                  - elasticloadbalancing:RegisterTargets
+                  - elasticloadbalancing:DeregisterTargets
+                  - elasticloadbalancing:DescribeTargetHealth
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DeleteNetworkInterface                       
+                Resource: "*"
+  
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: "elb_hostname_as_target.lambda_handler"
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code: lambda/
+      Environment:
+        Variables:
+          TARGET_FQDN: !Ref RdsFQDN
+          ELB_TG_ARN: !Ref NLBTargetGroup
+          S3_BUCKET: !Ref S3BucketForLambda
+          DNS_SERVER: !Ref DnsServers
+          BUCKET_REGION: !Ref AWS::Region
+          MAX_LOOKUP_PER_INVOCATION: 10
+          INVOCATIONS_BEFORE_DEREGISTRATION: 3
+          REPORT_IP_COUNT_CW_METRIC: false
+          REMOVE_UNTRACKED_TG_IP: false
+      MemorySize: 128
+      Runtime: python3.7
+      Timeout: 45
+      Tags:
+        - Key: Name
+          Value: !Ref AWS::StackName
+
+  LambdaEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: ScheduledRule
+      Name: ElbHostnameAsTargetEbTrigger
+      ScheduleExpression: rate(5 minutes)
+      State: ENABLED
+      Targets:
+        -
+          Arn: !GetAtt LambdaFunction.Arn
+          Id: LambdaFunctionV1
+
+  PermissionForEventsToInvokeLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt LambdaEventRule.Arn
 
 Outputs:
   NLBLoadBalancerDNSName:
@@ -86,3 +185,6 @@ Outputs:
     Value: !GetAtt NLBLoadBalancer.DNSName
     Export:
       Name: !Sub "${AWS::StackName}-NLBLoadBalancerDNSName"
+  LambdaFunctionArn:
+    Description: LambdaFunction Lambda ARN
+    Value: !GetAtt LambdaFunction.Arn
